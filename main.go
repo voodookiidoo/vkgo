@@ -31,33 +31,29 @@ func main() {
 
 }
 
-type empty struct{}
-
-var STUB = empty{}
-
 type WorkerPool struct {
-	taskChan       chan task    // канал по которому таски отправляются горутинам
-	finishChan     chan empty   // главный канал который завершает работу пула в целом
-	killWorkerChan chan empty   // канал по которому отправляются запросы за убийство воркера (ужас какой)
-	addWorkerChan  chan empty   // канал по которому отправляются запросы на добавление таски
-	outchan        chan any     // канал данных по которому их отправляют наружу
-	workerId       atomic.Int32 // айдигенератор для воркера
+	taskChan       chan task     // канал по которому таски отправляются горутинам
+	finishChan     chan struct{} // главный канал который завершает работу пула в целом
+	killWorkerChan chan struct{} // канал по которому отправляются запросы за убийство воркера (ужас какой)
+	addWorkerChan  chan struct{} // канал по которому отправляются запросы на добавление таски
+	outchan        chan any      // канал данных по которому их отправляют наружу
+	workerId       atomic.Int32  // айдигенератор для воркера
 }
 
 func (p *WorkerPool) Inc() {
 	go func() {
-		p.addWorkerChan <- STUB
+		p.addWorkerChan <- struct{}{}
 	}()
 
 }
 func (p *WorkerPool) Dec() {
 	go func() {
-		p.killWorkerChan <- STUB
+		p.killWorkerChan <- struct{}{}
 	}()
 }
 func (p *WorkerPool) ShutDown() {
 	go func() {
-		p.finishChan <- STUB
+		p.finishChan <- struct{}{}
 	}()
 }
 
@@ -114,9 +110,9 @@ func (p *WorkerPool) StartHandling() {
 
 func NewWorkerPool() *WorkerPool {
 	return &WorkerPool{
-		finishChan:     make(chan empty),
-		killWorkerChan: make(chan empty),
-		addWorkerChan:  make(chan empty),
+		finishChan:     make(chan struct{}),
+		killWorkerChan: make(chan struct{}),
+		addWorkerChan:  make(chan struct{}),
 		taskChan:       make(chan task),
 		outchan:        make(chan any, 1024),
 	}
