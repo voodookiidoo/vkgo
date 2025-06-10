@@ -36,12 +36,12 @@ type empty struct{}
 var STUB = empty{}
 
 type WorkerPool struct {
-	taskChan       chan task  // канал по которому таски отправляются горутинам
-	finishChan     chan empty // главный канал который завершает работу пула в целом
-	killWorkerChan chan empty // канал по которому отправляются запросы за убийство воркера (ужас какой)
-	addWorkerChan  chan empty // канал по которому отправляются запросы на добавление таски
-	outchan        chan any   // канал данных по которому их отправляют наружу
-	workerId       atomic.Int32
+	taskChan       chan task    // канал по которому таски отправляются горутинам
+	finishChan     chan empty   // главный канал который завершает работу пула в целом
+	killWorkerChan chan empty   // канал по которому отправляются запросы за убийство воркера (ужас какой)
+	addWorkerChan  chan empty   // канал по которому отправляются запросы на добавление таски
+	outchan        chan any     // канал данных по которому их отправляют наружу
+	workerId       atomic.Int32 // айдигенератор для воркера
 }
 
 func (p *WorkerPool) Inc() {
