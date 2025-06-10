@@ -18,7 +18,7 @@ func main() {
 	for i := range 20 {
 		pool.AddTask(func() any {
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)+200))
-			return fmt.Sprintf("I AM SOME DATA WITH ID %d, INDEX %d", rand.Int()%300, i)
+			return fmt.Sprintf("data with id %d and index %d", rand.Int()%300, i)
 		})
 	}
 	time.Sleep(time.Second * 4)
@@ -40,7 +40,6 @@ type WorkerPool struct {
 	addWorkerChan  chan empty // канал по которому отправляются запросы на добавление таски
 	outchan        chan any   // канал данных по которому их отправляют наружу
 	workerId       atomic.Int32
-	m              sync.Mutex
 }
 
 func (p *WorkerPool) Inc() {
@@ -67,45 +66,57 @@ func (p *WorkerPool) AddTask(t task) {
 }
 func (p *WorkerPool) StartHandling() {
 	ctx, cancel := context.WithCancel(context.Background())
-	go func(_ctx context.Context) {
+	wg := sync.WaitGroup{}
+	go func(ctx context.Context, cancelFunc context.CancelFunc) {
 		for {
 			select {
 			case <-p.finishChan:
-				cancel()
+				cancelFunc()
+				wg.Wait()
+				close(p.finishChan)
+				close(p.killWorkerChan)
+				close(p.addWorkerChan)
 				close(p.outchan)
+				close(p.taskChan)
 				return
 			case <-p.addWorkerChan:
+				wg.Add(1)
 				id := p.workerId.Add(1)
 				go func(id int32) {
+					defer wg.Done()
 					fmt.Printf("chan with id %d is started\n", id)
 					for {
 						select {
+						case <-ctx.Done():
+							return
 						case <-p.killWorkerChan:
 							fmt.Printf("chan with id %d is finished\n", id)
 							break
 						case t := <-p.taskChan:
 							a := t()
-							fmt.Printf("chan with id %d calculated value %s\n", id, a)
-							p.outchan <- a
+							select {
+							case <-ctx.Done():
+								return
+							default:
+								fmt.Printf("chan with id %d calculated value %s\n", id, a)
+								p.outchan <- a
+							}
 						}
 
 					}
 				}(id)
-
 			}
 		}
-
-	}(ctx)
+	}(ctx, cancel)
 }
 
 func NewWorkerPool() *WorkerPool {
 	return &WorkerPool{
-		finishChan:     make(chan empty, 1024),
-		killWorkerChan: make(chan empty, 1024),
-		addWorkerChan:  make(chan empty, 1024),
-		taskChan:       make(chan task, 1024),
+		finishChan:     make(chan empty),
+		killWorkerChan: make(chan empty),
+		addWorkerChan:  make(chan empty),
+		taskChan:       make(chan task),
 		outchan:        make(chan any, 1024),
-		m:              sync.Mutex{},
 	}
 }
 
