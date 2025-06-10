@@ -1,105 +1,111 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type Stub struct{}
-
-var STUB = Stub{}
-
 func main() {
-	// создадим общий канал в который будем закидывать задачи
-	pool := NewWorkerPool(3)
-	pool.Start()
-	for range 20 {
-		pool.Execute(func() any {
-			x := rand.Int63n(5)
-			time.Sleep(time.Duration(x) * time.Second)
-			i := rand.Int()
-			input := fmt.Sprintf("Some random value, %d", i)
-			fmt.Println(input)
-			return i
+	pool := NewWorkerPool()
+	pool.StartHandling()
+	pool.Inc()
+	pool.Inc()
+	pool.Inc()
+	for i := range 20 {
+		pool.AddTask(func() any {
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)+200))
+			return fmt.Sprintf("I AM SOME DATA WITH ID %d, INDEX %d", rand.Int()%300, i)
 		})
 	}
-	time.Sleep(time.Minute)
-	for data := range pool.outChan {
-		fmt.Println("some value came, it is: ", data)
+	time.Sleep(time.Second * 4)
+	pool.Halt()
+	for data := range pool.outchan {
+		fmt.Println("recieved data: ", data)
 	}
-	pool.Stop()
-	
+
 }
+
+type empty struct{}
+
+var STUB = empty{}
 
 type WorkerPool struct {
-	controlChan  chan command
-	finishedChan chan Stub
-	workerCount  *atomic.Int32
-	outChan      chan any
+	taskChan       chan task  // канал по которому таски отправляются горутинам
+	finishChan     chan empty // главный канал который завершает работу пула в целом
+	killWorkerChan chan empty // канал по которому отправляются запросы за убийство воркера (ужас какой)
+	addWorkerChan  chan empty // канал по которому отправляются запросы на добавление таски
+	outchan        chan any   // канал данных по которому их отправляют наружу
+	workerId       atomic.Int32
+	m              sync.Mutex
 }
 
-func (w *WorkerPool) Execute(t task) {
-	chanNum := w.workerCount.Add(1)
-	go func(i int32) {
-		<-w.finishedChan
-		fmt.Printf("task number %d started\n", i)
-		data := t()
-		fmt.Printf("task number %d finished\n", i)
-		w.outChan <- data
-		w.finishedChan <- STUB
-	}(chanNum)
-}
-
-func (w *WorkerPool) Inc() {
-	w.controlChan <- Add
-}
-func (w *WorkerPool) Dec() {
-	w.controlChan <- Sub
-}
-func (w *WorkerPool) Stop() {
-	w.controlChan <- Halt
-}
-
-func (w *WorkerPool) Start() {
-	count := w.workerCount.Load()
-	for range count {
-		w.finishedChan <- STUB
-	}
+func (p *WorkerPool) Inc() {
 	go func() {
-		for data := range w.controlChan {
-			switch data {
-			case Add:
-				w.workerCount.Add(1)
-				w.finishedChan <- STUB
-			case Sub:
-				<-w.finishedChan
-				w.workerCount.Add(-1)
-			case Halt:
-				close(w.outChan)
-			}
-		}
+		p.addWorkerChan <- STUB
+	}()
+
+}
+func (p *WorkerPool) Dec() {
+	go func() {
+		p.killWorkerChan <- STUB
+	}()
+}
+func (p *WorkerPool) Halt() {
+	go func() {
+		p.finishChan <- STUB
 	}()
 }
 
-func NewWorkerPool(workerCount int32) *WorkerPool {
-	count := atomic.Int32{}
-	count.Store(workerCount)
+func (p *WorkerPool) AddTask(t task) {
+	go func() {
+		p.taskChan <- t
+	}()
+}
+func (p *WorkerPool) StartHandling() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func(_ctx context.Context) {
+		for {
+			select {
+			case <-p.finishChan:
+				cancel()
+				return
+			case <-p.addWorkerChan:
+				id := p.workerId.Add(1)
+				go func(id int32) {
+					fmt.Printf("chan with id %d is started\n", id)
+					for {
+						select {
+						case <-p.killWorkerChan:
+							fmt.Printf("chan with id %d is finished\n", id)
+							break
+						case t := <-p.taskChan:
+							a := t()
+							fmt.Printf("chan with id %d calculated value %s\n", id, a)
+							p.outchan <- a
+						}
+
+					}
+				}(id)
+
+			}
+		}
+
+	}(ctx)
+}
+
+func NewWorkerPool() *WorkerPool {
 	return &WorkerPool{
-		controlChan:  make(chan command, 1024),
-		finishedChan: make(chan Stub, 1024),
-		workerCount:  &count,
-		outChan:      make(chan any, 1024),
+		finishChan:     make(chan empty, 1024),
+		killWorkerChan: make(chan empty, 1024),
+		addWorkerChan:  make(chan empty, 1024),
+		taskChan:       make(chan task, 1024),
+		outchan:        make(chan any, 1024),
+		m:              sync.Mutex{},
 	}
 }
 
 type task = func() any
-
-type command = int
-
-const (
-	Add command = iota
-	Sub
-	Halt
-)
