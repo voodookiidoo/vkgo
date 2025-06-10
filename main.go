@@ -12,17 +12,19 @@ import (
 func main() {
 	pool := NewWorkerPool()
 	pool.StartHandling()
-	pool.Inc()
-	pool.Inc()
-	pool.Inc()
+	for range 5 {
+		pool.Inc()
+	}
 	for i := range 20 {
 		pool.AddTask(func() any {
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)+200))
 			return fmt.Sprintf("data with id %d and index %d", rand.Int()%300, i)
 		})
 	}
+	pool.Dec()
+	pool.Dec()
 	time.Sleep(time.Second * 4)
-	pool.Halt()
+	pool.ShutDown()
 	for data := range pool.outchan {
 		fmt.Println("recieved data: ", data)
 	}
@@ -53,7 +55,7 @@ func (p *WorkerPool) Dec() {
 		p.killWorkerChan <- STUB
 	}()
 }
-func (p *WorkerPool) Halt() {
+func (p *WorkerPool) ShutDown() {
 	go func() {
 		p.finishChan <- STUB
 	}()
