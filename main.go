@@ -72,6 +72,7 @@ func (p *WorkerPool) StartHandling() {
 			select {
 			case <-p.finishChan:
 				cancel()
+				close(p.outchan)
 				return
 			case <-p.addWorkerChan:
 				id := p.workerId.Add(1)
